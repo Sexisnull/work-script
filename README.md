@@ -4,3 +4,4 @@
 ## 更新时间线
 
 2021-6-20 vulmon.py github cve监控脚本
+2021-9-08 pcinfo.bat\sh 蓝队反制后信息收集脚本v0.1
