@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 # coding:utf-8
 # 批量扫描C段目标tcp端口开放扫描及应用端口banner识别
+# 2021-10 update 添加批量获取域名及相应C段资产信息
 
 import sys
 import socket
@@ -8,9 +9,12 @@ import requests
 import time
 from bs4 import BeautifulSoup
 from multiprocessing.dummy import Pool as ThreadPool
-from multiprocessing.dummy import Lock
+from multiprocessing.dummy import RLock
+from urllib.parse import urlparse
 import argparse
 import xlwt
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 def format_target(ips):
@@ -23,13 +27,58 @@ def format_target(ips):
 
 
 def format_file(file):
-    # ip处理
+    # ip、域名处理
     iplist = []
     with open(file, 'r') as f:
         for i in f.readlines():
-            iplist.append(i)
+            if ("http://" in i) or ("https://" in i):
+                domain = urlparse(i.strip())[1]
+                iplist.append(domain)
+            else:
+                iplist.append(i.strip())
 
     return iplist
+
+
+def domain_ip(url):
+    try:
+        ip = socket.getaddrinfo(url, None)[0][4][0]
+        return ip
+    except:
+        pass
+
+
+def format_domain(file, **url):
+    # 域名处理
+    iplist = []
+    diplist = []
+    domainlist = []
+    if url:
+        domain = url.get('domain')
+        domainlist.append(domain)
+        ip = domain_ip(domain)
+        ipl = format_target(ip[:ip.rfind('.') + 1] + "0/24")
+        iplist = iplist + ipl
+    else:
+        with open(file, 'r') as f:
+            for i in f.readlines():
+                if ("http://" in i) or ("https://" in i):
+                    domain = urlparse(i.strip())[1]
+                    domainlist.append(domain)
+                    ip = domain_ip(domain)
+                    if ip:
+                        diplist.append(ip)
+                else:
+                    domainlist.append(i.strip())
+                    ip = domain_ip(i.strip())
+                    if ip:
+                        diplist.append(ip)
+        diplist = list(set(diplist))
+        for ip in diplist:
+            ipl = format_target(ip[:ip.rfind('.') + 1] + "0/24")
+            iplist = iplist + ipl
+
+    return domainlist, iplist
 
 
 def scan_poll(target):
@@ -56,7 +105,7 @@ class Scanner(object):
         self.targets = targets
         self.time = time.time()
         self.result = []
-        self.mutex = Lock()
+        self.mutex = RLock()
         self.outfile = outfile
         self.headers = {
             'user-agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/50.0.2661.102 Safari/537.36'}
@@ -95,11 +144,11 @@ class Scanner(object):
         finally:
             s.close()
 
-    def fofa_api():
+    def fofa_api(self, ):
         pass
 
     def output_excel(self, data):
-        # data = [['ip:port','code','target'],['ip:port','code','target']]
+        # data = [['ip:port','code','banner'],['ip:port','code','banner']]
         data = [d for d in data if d != []]
         xl = xlwt.Workbook(encoding='utf-8')
         sheet = xl.add_sheet('one')
@@ -116,34 +165,51 @@ class Scanner(object):
     def run(self, target):
         data = []
         try:
-            if self.scan_port(target):
+            if ":" not in target:
                 banner = self.get_http_banner('http://{}'.format(target))
                 self.mutex.acquire()
                 if banner:
-                    print(target + ' open ' + str(banner[0]) + ' ' + banner[1])
+                    print(target + ' ' + str(banner[0]) + ' ' + banner[1])
                     data.append(target)
                     data.append(banner[0])
                     data.append(banner[1])
                 else:
                     banner = self.get_http_banner('https://{}'.format(target))
                     if banner:
+                        print(target + ' ' + str(banner[0]) + ' ' + banner[1])
+                        data.append(target)
+                        data.append(banner[0])
+                        data.append(banner[1])
+                self.mutex.release()
+            else:
+                if self.scan_port(target):
+                    banner = self.get_http_banner('http://{}'.format(target))
+                    self.mutex.acquire()
+                    if banner:
                         print(target + ' open ' + str(banner[0]) + ' ' + banner[1])
                         data.append(target)
                         data.append(banner[0])
                         data.append(banner[1])
                     else:
-                        banner = self.get_socket_info(target)
+                        banner = self.get_http_banner('https://{}'.format(target))
                         if banner:
-                            print(target + ' open ' + 'xxx' + banner)
+                            print(target + ' open ' + str(banner[0]) + ' ' + banner[1])
                             data.append(target)
-                            data.append('xxx')
-                            data.append(banner)
+                            data.append(banner[0])
+                            data.append(banner[1])
                         else:
-                            print(target + ' open')
-                            data.append(target)
-                            data.append('xxx')
-                            data.append('unknown')
-                self.mutex.release()
+                            banner = self.get_socket_info(target)
+                            if banner:
+                                print(target + ' open ' + 'xxx ' + banner)
+                                data.append(target)
+                                data.append('xxx')
+                                data.append(banner)
+                            else:
+                                print(target + ' open')
+                                data.append(target)
+                                data.append('xxx')
+                                data.append('unknown')
+                    self.mutex.release()
         except Exception as e:
             pass
         finally:
@@ -158,7 +224,7 @@ class Scanner(object):
             data = pool.map_async(self.run, self.targets).get(0xffff)
             pool.close()
             pool.join()
-            print('-' * 60+ '扫描完成')
+            print('-' * 60 + '扫描完成')
             print('[-] 扫描完成耗时: {} 秒.'.format(time.time() - self.time))
             if self.outfile:
                 self.output_excel(data)
@@ -187,19 +253,29 @@ if __name__ == '__main__':
     parser.add_argument("-ip", dest='ip', help='ipv4 或 ipv6地址')
     parser.add_argument("-cip", dest='cip', help='C段IP')
     parser.add_argument("-f", "--file", dest='file', help='ip地址文件')
+    parser.add_argument("-f1", "--file1", dest='file1', help='域名地址文件，仅扫描域名banner')
+    parser.add_argument("-d", dest='domain', help='扫描单个域名及C段')
+    parser.add_argument("-dc", dest='domainc', help='域名文件,解析并扫描C段')
     parser.add_argument("-o", "--output", dest='output', help='输出到xls文件')
     parser.add_argument("-so", "--fofa", dest='fofa', help='调用fofaAPI查询')
 
     args = parser.parse_args()
+    domainlist = []
     iplist = []
     if args.cip:
         iplist = format_target(args.cip)
     if args.file:
-        iplist = format_target(args.file)
+        iplist = format_file(args.file)
+    if args.file1:
+        domainlist = format_file(args.file1)
     if args.ip:
         iplist.append(args.ip)
-    if iplist:
-        targets = scan_poll(iplist)
+    if args.domainc:
+        domainlist, iplist = format_domain(args.domainc)
+    if args.domain:
+        domainlist, iplist = format_domain(file='', domain=args.domain)
+    if iplist or domainlist:
+        targets = domainlist + scan_poll(iplist)
         if args.output:
             myscan = Scanner(targets=targets, outfile=args.output)
             myscan.start()
