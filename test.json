@@ -1,8 +1,8 @@
 {
-    "url": "https://jumpy-floor.surge.sh/test.yaml",
+    "url": "https://raw.githubusercontent.com/Sexisnull/work-script/main/test.yaml",
     "urls": [
         {
-            "url": "https://jumpy-floor.surge.sh/test.yaml",
+            "url": "https://raw.githubusercontent.com/Sexisnull/work-script/main/test.yaml",
             "name": "Foo"
         }
     ]
