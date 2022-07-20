@@ -1,0 +1,31 @@
+# python3
+# nmap普通端口扫描结果xml转json
+# 返回数据格式如下
+# {'127.0.0.1':[{'port': '22', 'status': 'open', 'server_name': 'ssh'}, {'port': '3306', 'status': 'closed', 'server_name': 'mysql'}], '192.168.1.1': []}
+import xml.etree.ElementTree as xml
+import json
+
+def xml2json(file):
+    try:
+        tree = xml.parse(file)
+    except:
+        print('未找到文件')
+    root = tree.getroot()
+    data = {}
+    for h in root.iter('host'):
+        port_data_list = []
+        address = h.find('address')
+        ports = h.find('ports')
+        addr = address.attrib['addr']
+        for p in ports.iter('port'):
+            port_info_dict = {}
+            port_info_dict['port'] = p.attrib['portid']
+            for s in p.iter():
+                if s.tag == "state":
+                    port_info_dict['status'] = s.attrib['state']
+                if s.tag == "service":
+                    port_info_dict['server_name'] = s.attrib['name']
+            port_data_list.append(port_info_dict)
+        data[addr] = port_data_list
+
+    return json.dumps(data)
